@@ -5,15 +5,15 @@ jobs :
       runs-on : ubuntu-latest
       steps:  
       - uses: actions/checkout@v2
-
-      - run: mkdir -p khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
-   
-      
+       
+      - name: Validate ARM Modules
+        run: find ./Scripts | grep .json | xargs -L1 python -mjson.tool > /dev/null
+        shell: bash
 
       - uses: actions/upload-artifact@v2
         with:
          name: BuildArtifacts
-         path: khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
+         path: ./
 
    
     deploy:
