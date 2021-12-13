@@ -4,11 +4,12 @@ jobs :
     Build :
       runs-on : ubuntu-latest
       steps:
-       - name: Upload Build Artifact
-         uses: actions/upload-artifact@v2.2.4
-         with:
-          name: BuildArtifacts
-          path: Scripts/**
+      - uses: actions/upload-artifact@v2
+        with:
+          name: my-artifact
+          path: path/to/artifact/ # or path/to/artifact
+
+ 
     deploy:
       runs-on : ubuntu-latest
       steps:
