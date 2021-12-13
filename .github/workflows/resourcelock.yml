@@ -1,0 +1,6 @@
+name : test resouce lock
+on:
+ workflow_displatch
+
+ 
+  
