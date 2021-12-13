@@ -5,23 +5,26 @@ name: Global Tests
 # Controls when the workflow will run
 on:
   # Allows you to run this workflow manually from the Actions tab
- workflow_dispatch:
+  workflow_dispatch:
     inputs:
-      SubscriptionTarget:
+      environment:
+        type: environment
+        description: Select the environment
+      boolean:
+        type: boolean
+        description: True or False
+      choice:
         type: choice
-        description: SubscriptionTarget
-        options :
-          - iden
-        
-      DeploymentType :
-        type: choice   
-        description: deploymentType
+        description: Make a choice
         options:
-          - all
-          - network
-          - routeTables
-          - networkSecurityGroups
-          - vnetPeerings 
+          - foo
+          - bar
+      choice1:
+        type: choice
+        description: Make another choice
+        options:
+          - he
+          - ha
      
 env:
   agentWin: windows-latest
