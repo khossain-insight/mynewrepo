@@ -6,9 +6,10 @@ jobs :
       steps:
        - name: Upload Build Artifact
          uses: actions/upload-artifact@v2.2.4
+         if: failure
          with:
           name: BuildArtifacts
-          path: mynewrepo/Scripts
+          path: world.txt
     deploy:
       runs-on : ubuntu-latest
       steps:
