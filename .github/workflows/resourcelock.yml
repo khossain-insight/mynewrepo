@@ -1,65 +1,43 @@
 name : test job
+on: [push]
 jobs :
-    deploy :
+    Build :
+      runs-on : ubuntu-latest
+      steps:
+       - name: Upload Build Artifact
+         uses: actions/upload-artifact@v2.2.4
+         with:
+          name: BuildArtifacts
+          path: ./
+    deploy:
       runs-on : ubuntu-latest
       steps:
        - name: Azure Login
          uses: Azure/login@v1
          with:
-          creds: ${{ secrets.AZURE_SP_MG }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
           allow-no-subscriptions: true
           enable-AzPSSession: true
+          
+       - name: checkout source code
+         uses: actions/checkout@v2
+         
+       - name: Download a Build Artifact
+         uses: actions/download-artifact@v2.0.10
+         with:
+           name: BuildArtifacts 
+           
+       - name : Remove RG Locks
+         uses: Azure/powershell@v1
+         with :
+          inlineScript: |
+            ./Scripts/removeResourceLocks.ps1 `
+               -resourceGroupList "githubactions" `
+               -subscriptionId ${{ secrets.SUB_IDEN_ID }} `
+               -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+               -skipTags
+          azPSVersion: latest
+         
        
       
       
-
-name: Global Tests
-
-# Controls when the workflow will run
-on:
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-    inputs:
-      environment:
-        type: environment
-        description: Select the environment
-      boolean:
-        type: boolean
-        description: True or False
-      choice:
-        type: choice
-        description: Make a choice
-        options:
-          - prod
-          - dev
-    
-     
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
-jobs:
-   Build:
-    runs-on: ${{ secrets.AGENT_LIX }}
-    steps:
-    # Checkout code from repo
-    - uses: actions/checkout@v2
-
-    # Validate ARM Modules
-    - name: Validate ARM Modules
-      run: find ./Modules | grep .json | xargs -L1 python -mjson.tool > /dev/null
-      shell: cmd
-
-    # Validate ARM Configurations
-    - name: Validate ARM Configurations
-      run: find ./Configuration | grep .json | xargs -L1 python -mjson.tool > /dev/null
-      shell: cmd
-    
-    # Upload Build Artifact
-     - name: Upload Build Artifact
-       uses: actions/upload-artifact@v2
-        with:
-          name: my-artifact
-          path: path/to/artifact/ # or path/to/artifact
-    
-     
-
- 
-  
