@@ -1,0 +1,91 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Global Tests
+
+# Controls when the workflow will run
+on:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: environment
+        description: Select the environment
+      boolean:
+        type: boolean
+        description: True or False
+      choice:
+        type: choice
+        description: Make a choice
+        options:
+          - foo
+          - bar
+      choice1:
+        type: choice
+        description: Make another choice
+        options:
+          - he
+          - ha
+     
+env:
+  agentWin: windows-latest
+  TES: TEST
+  Azure: "secrets.${{ github.event.inputs.choice1 }}"
+  Azure1: ${{ github.event.inputs.choice }}
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: windows-latest
+    environment: Dev
+    
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+         
+      - name: Azure Login
+        uses: Azure/login@v1
+        with:
+          # Paste output of `az ad sp create-for-rbac` as value of secret variable: AZURE_CREDENTIALS
+          creds: ${{ secrets.AZURE_SP }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+         
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v2.2.4
+        with:
+          name: jayartifact
+          path: ./
+     
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: |
+          echo ${{ github.event.inputs.choice }}
+          echo ${{ github.event.inputs.choice1 }}
+          
+  Test:
+    needs: build
+    if: success()
+    runs-on: ubuntu-latest
+    env:
+      path: './Modules/test.ps1'
+      para: 'haha'
+    steps:
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: jayartifact
+          
+
+      - name: Azure PowerShell Action
+        uses: Azure/powershell@v1
+        with:
+          # Specify the Az PowerShell script here.
+          inlineScript: |
+            ${{ env.path }} `
+            -Parameter1 ${{ env.para }}
+          azPSVersion: latest
+          
