@@ -9,7 +9,7 @@ jobs :
          if: failure
          with:
           name: BuildArtifacts
-          path: Scripts/removeResourceLocks.ps1
+          path: Scripts/**
     deploy:
       runs-on : ubuntu-latest
       steps:
