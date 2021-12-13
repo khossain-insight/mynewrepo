@@ -1,0 +1,22 @@
+parameters:
+- name: publishArtifacts
+  type: boolean
+  default: false
+
+jobs:
+- job:
+  steps:
+  - task: CmdLine@2
+    displayName: "Validate ARM Modules"
+    inputs:
+      script: 'find ./Modules | grep .json | xargs -L1 python -mjson.tool > /dev/null'
+  - task: CmdLine@2
+    displayName: "Validate ARM Configurations"
+    inputs:
+      script: 'find ./Configuration | grep .json | xargs -L1 python -mjson.tool > /dev/null'
+  - ${{ if eq(parameters.publishArtifacts, true)}}:
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: PublishArtifacts'
+      inputs:
+        PathtoPublish: ./
+        ArtifactName: BuildArtifacts

@@ -1,0 +1,660 @@
+
+name: Network Security
+
+on:
+  workflow_dispath:
+    inputs:
+      deploymentType:
+        type: choice
+        description: deploymentType
+        options:
+          - ipGroups
+          - intHub-firewallPolicy
+          - extHub-firewallPolicy
+          - intHub-firewall
+          - extHub-firewall
+          - all-intHub
+          - all-extHub
+
+env:
+  TARGET: platform
+
+jobs:
+  Build:
+    runs-on: ${{ secrets.AGENT_LIX }}
+    steps:
+    # Checkout code from repo
+    - uses: actions/checkout@v2
+
+    # Validate ARM Modules
+    - name: Validate ARM Modules
+      run: find ./Modules | grep .json | xargs -L1 python -mjson.tool > /dev/null
+      shell: cmd
+
+    # Validate ARM Configurations
+    - name: Validate ARM Configurations
+      run: find ./Configuration | grep .json | xargs -L1 python -mjson.tool > /dev/null
+      shell: cmd
+    
+    # Upload Build Artifact
+    - name: Upload Build Artifact
+        uses: actions/upload-artifact@v2.2.4
+        with:
+          name: BuildArtifacts
+          path: ./
+
+  Preview:
+    needs: Build
+    if: success()
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: PlatformPreview
+    env:
+      # IP Groups
+      templateIpGroupsPath: './Modules/Microsoft.Network/ipGroups/ipGroups.deploy.json'
+      templateIpGroupsParameterPath: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-ipGroups/${{ env.TARGET }}-conn-ig-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-01.parameters.json'
+      # firewall Public IP Addresses
+      templatePipPath: './Modules/Microsoft.Network/publicIPAddresses/publicIPAddresses.deploy.json'
+      templatePipParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-publicIPAddresses/${{ env.TARGET }}-conn-pip-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templatePipParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-publicIPAddresses/${{ env.TARGET }}-conn-pip-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # firewall Policies
+      templateFwPolicyPath: './Modules/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json'
+      templateFwPolicyParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwPolicyParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # firewalls
+      templateFwPath: './Modules/Microsoft.Network/azureFirewalls/azureFirewalls.deploy.json'
+      templateFwParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-azureFirewalls/${{ env.TARGET }}-conn-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-azureFirewalls/${{ env.TARGET }}-conn-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Authorization-locks'
+ 
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # IP Groups
+      - name: Deploy IP Groups
+        if: ${{ github.event.inputs.deploymentType == 'ipGroups' || github.event.inputs.deploymentType == 'all-intHub' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateIpGroupsPath }} `
+              -templateParametersFile ${{ env.templateIpGroupsParameterPath }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Internal Hub Firewall Public IP Address
+      - name: Deploy IntHub Firewall Public IP
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatePipPath }} `
+              -templateParametersFile ${{ env.templatePipParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub Firewall Public IP Address
+      - name: Deploy ExtHub Firewall Public IP
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatePipPath }} `
+              -templateParametersFile ${{ env.templatePipParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Internal Hub firewall Policy
+      - name: Deploy IntHub firewall Policy
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPolicyPath }} `
+              -templateParametersFile ${{ env.templateFwPolicyParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub firewall Policy
+      - name: Deploy ExtHub firewall Policy
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPolicyPath }} `
+              -templateParametersFile ${{ env.templateFwPolicyParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      
+      # Internal Hub firewall
+      - name: Deploy IntHub firewall
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPath }} `
+              -templateParametersFile ${{ env.templateFwParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub firewall
+      - name: Deploy ExtHub firewall
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPath }} `
+              -templateParametersFile ${{ env.templateFwParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Add IP Groups RG locks
+      - name: Add IP Groups RG locks
+        if: ${{ github.event.inputs.deploymentType == 'ipGroups' || github.event.inputs.deploymentType == 'all-intHub' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+      # Add IntHub RG locks
+      - name: Add IntHub RG locks
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+      # Add ExtHub RG locks
+      - name: Add ExtHub RG locks
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-extHub-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-extHub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+
+  ComponentsTest:
+    needs: Preview
+    if: success()
+    runs-on: ${{ secrets.AGENT_WIN }}
+
+    steps:
+      - name: Components Test
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/Pester/invokePester.ps1 `
+              -testSubDirectory ConfigFileTests `
+              -tagArray @("Microsoft.Network-azureFirewalls","Microsoft.Network-firewallPolicies","Microsoft.Network-publicIPAddresses","Microsoft.Network-ipGroups")
+          azPSVersion: latest
+
+      - name: Publish Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v1
+        if: always()
+        with:
+          files: '**/TEST-*.xml'
+  
+  NonProduction:
+    needs: ComponentsTest
+    if: ${{ success() && GITHUB_REF_NAME == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: PlatformNonProduction
+    env:
+      # IP Groups
+      templateIpGroupsPath: './Modules/Microsoft.Network/ipGroups/ipGroups.deploy.json'
+      templateIpGroupsParameterPath: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-ipGroups/${{ env.TARGET }}-conn-ig-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-01.parameters.json'
+      # firewall Public IP Addresses
+      templatePipPath: './Modules/Microsoft.Network/publicIPAddresses/publicIPAddresses.deploy.json'
+      templatePipParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-publicIPAddresses/${{ env.TARGET }}-conn-pip-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templatePipParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-publicIPAddresses/${{ env.TARGET }}-conn-pip-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # firewall Policies
+      templateFwPolicyPath: './Modules/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json'
+      templateFwPolicyParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwPolicyParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # firewalls
+      templateFwPath: './Modules/Microsoft.Network/azureFirewalls/azureFirewalls.deploy.json'
+      templateFwParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-azureFirewalls/${{ env.TARGET }}-conn-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-azureFirewalls/${{ env.TARGET }}-conn-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Authorization-locks'
+    
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # IP Groups
+      - name: Deploy IP Groups
+        if: ${{ github.event.inputs.deploymentType == 'ipGroups' || github.event.inputs.deploymentType == 'all-intHub' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateIpGroupsPath }} `
+              -templateParametersFile ${{ env.templateIpGroupsParameterPath }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Internal Hub Firewall Public IP Address
+      - name: Deploy IntHub Firewall Public IP
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatePipPath }} `
+              -templateParametersFile ${{ env.templatePipParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub Firewall Public IP Address
+      - name: Deploy ExtHub Firewall Public IP
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatePipPath }} `
+              -templateParametersFile ${{ env.templatePipParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Internal Hub firewall Policy
+      - name: Deploy IntHub firewall Policy
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPolicyPath }} `
+              -templateParametersFile ${{ env.templateFwPolicyParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub firewall Policy
+      - name: Deploy ExtHub firewall Policy
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPolicyPath }} `
+              -templateParametersFile ${{ env.templateFwPolicyParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      
+      # Internal Hub firewall
+      - name: Deploy IntHub firewall
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPath }} `
+              -templateParametersFile ${{ env.templateFwParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub firewall
+      - name: Deploy ExtHub firewall
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPath }} `
+              -templateParametersFile ${{ env.templateFwParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Add IP Groups RG locks
+      - name: Add IP Groups RG locks
+        if: ${{ github.event.inputs.deploymentType == 'ipGroups' || github.event.inputs.deploymentType == 'all-intHub' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+      # Add IntHub RG locks
+      - name: Add IntHub RG locks
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+      # Add ExtHub RG locks
+      - name: Add ExtHub RG locks
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-extHub-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-extHub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+ 
+  RegressionTest:
+    needs: NonProduction
+    if: ${{ success() && GITHUB_REF_NAME == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: PlatformProduction
+    env:
+      templateFwPolicyPath: './Modules/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json'
+      templateFwPolicyParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwPolicyParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'   
+      
+    steps:
+      # Internal Hub Firewall Rules regression testing
+      - name: Internal Hub Firewall Rules regression testing
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            write-host "Set az context"
+            Set-AzContext -SubscriptionId ${{ secrets.SUB_CONN_ID }} | out-null
+            New-AzResourceGroupDeployment 
+              -Whatif `
+              -ResourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -TemplateFile ${{ env.templateFwPolicyPath }} `
+              -TemplateParameterFile ${{ env.templateFwPolicyParameterPath_intHub }}
+          azPSVersion: latest
+      
+      # External Hub Firewall Rules regression testing
+      - name: External Hub Firewall Rules regression testing
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            write-host "Set az context"
+            Set-AzContext -SubscriptionId ${{ secrets.SUB_CONN_ID }} | out-null
+            New-AzResourceGroupDeployment 
+              -Whatif `
+              -ResourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -TemplateFile ${{ env.templateFwPolicyPath }} `
+              -TemplateParameterFile ${{ env.templateFwPolicyParameterPath_extHub }}
+          azPSVersion: latest
+
+  Production:
+    needs: RegressionTest
+    if: ${{ success() && GITHUB_REF_NAME == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: PlatformProduction
+    env:
+      # IP Groups
+      templateIpGroupsPath: './Modules/Microsoft.Network/ipGroups/ipGroups.deploy.json'
+      templateIpGroupsParameterPath: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-ipGroups/${{ env.TARGET }}-conn-ig-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-01.parameters.json'
+      # firewall Public IP Addresses
+      templatePipPath: './Modules/Microsoft.Network/publicIPAddresses/publicIPAddresses.deploy.json'
+      templatePipParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-publicIPAddresses/${{ env.TARGET }}-conn-pip-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templatePipParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-publicIPAddresses/${{ env.TARGET }}-conn-pip-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # firewall Policies
+      templateFwPolicyPath: './Modules/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json'
+      templateFwPolicyParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwPolicyParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-firewallPolicies/${{ env.TARGET }}-conn-fwp-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # firewalls
+      templateFwPath: './Modules/Microsoft.Network/azureFirewalls/azureFirewalls.deploy.json'
+      templateFwParameterPath_intHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-azureFirewalls/${{ env.TARGET }}-conn-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-inthub-01.parameters.json'
+      templateFwParameterPath_extHub: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Network-azureFirewalls/${{ env.TARGET }}-conn-azfw-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-${{ env.TARGET }}-exthub-01.parameters.json'
+      # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/${{ secrets.ENV_PREFIX }}/Microsoft.Authorization-locks'
+    
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # IP Groups
+      - name: Deploy IP Groups
+        if: ${{ github.event.inputs.deploymentType == 'ipGroups' || github.event.inputs.deploymentType == 'all-intHub' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateIpGroupsPath }} `
+              -templateParametersFile ${{ env.templateIpGroupsParameterPath }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Internal Hub Firewall Public IP Address
+      - name: Deploy IntHub Firewall Public IP
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatePipPath }} `
+              -templateParametersFile ${{ env.templatePipParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub Firewall Public IP Address
+      - name: Deploy ExtHub Firewall Public IP
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatePipPath }} `
+              -templateParametersFile ${{ env.templatePipParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Internal Hub firewall Policy
+      - name: Deploy IntHub firewall Policy
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPolicyPath }} `
+              -templateParametersFile ${{ env.templateFwPolicyParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub firewall Policy
+      - name: Deploy ExtHub firewall Policy
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPolicyPath }} `
+              -templateParametersFile ${{ env.templateFwPolicyParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      
+      # Internal Hub firewall
+      - name: Deploy IntHub firewall
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPath }} `
+              -templateParametersFile ${{ env.templateFwParameterPath_intHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # External Hub firewall
+      - name: Deploy ExtHub firewall
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templateFwPath }} `
+              -templateParametersFile ${{ env.templateFwParameterPath_extHub }} `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-exthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }}
+          azPSVersion: latest
+
+      # Add IP Groups RG locks
+      - name: Add IP Groups RG locks
+        if: ${{ github.event.inputs.deploymentType == 'ipGroups' || github.event.inputs.deploymentType == 'all-intHub' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-ipgroups-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+      # Add IntHub RG locks
+      - name: Add IntHub RG locks
+        if: ${{ github.event.inputs.deploymentType == 'intHub-firewallPolicy' || github.event.inputs.deploymentType == 'intHub-firewall' || github.event.inputs.deploymentType == 'all-intHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-inthub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+
+      # Add ExtHub RG locks
+      - name: Add ExtHub RG locks
+        if: ${{ github.event.inputs.deploymentType == 'extHub-firewallPolicy' || github.event.inputs.deploymentType == 'extHub-firewall' || github.event.inputs.deploymentType == 'all-extHub' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/New-DeploymentV2.ps1 `
+              -templateFile ${{ env.templatelockPath }} `
+              -templateParametersFile ${{ env.templatelockParameterPath }}/rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-extHub-01.locks.parameters.json `
+              -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-${{ secrets.ENV_PREFIX }}-extHub-01 `
+              -subscriptionId ${{ secrets.SUB_CONN_ID }} `
+              -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
+              -skipTags
+          azPSVersion: latest
+ 

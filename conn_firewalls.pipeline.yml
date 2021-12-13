@@ -1,0 +1,695 @@
+
+name: $(Date:ddMMyy).$(Rev:rr).$(subscriptionsTarget).networkSecurity.${{ parameters.deploymentType }}.CommitComment-
+pool:
+  vmImage: ubuntu-latest
+parameters:
+  - name: deploymentType
+    default: ipGroups
+    type: string
+    values:
+      - ipGroups
+      - intHub-firewallPolicy
+      - extHub-firewallPolicy
+      - intHub-firewall
+      - extHub-firewall
+      - all-intHub
+      - all-extHub
+
+variables:
+  - group: "AzureEnvironmentIdentifiers"
+  - name: target
+    value: platform
+  - name: corePathModules
+    value: $(Pipeline.Workspace)/BuildArtifacts/Modules
+  - name: corePathConfig
+    value: $(Pipeline.Workspace)/BuildArtifacts/Configuration/$(target)
+  - name: corePathScripts
+    value: $(Pipeline.Workspace)/BuildArtifacts/Scripts
+  - name: subscriptionsTarget
+    value: conn
+
+stages:
+  - stage: Build
+    jobs:
+      - template: /Pipelines/build/job-codeBuild.yml
+        parameters:
+          publishArtifacts: true
+
+  - stage: Preview
+    pool:
+      vmImage: $(agent)
+    variables:
+      - group: ${{ variables.target }}-Preview
+    condition: succeeded()
+    jobs:
+      - deployment: "Deployment_firewall_${{ variables.subscriptionsTarget }}"
+        variables:
+          subscriptionId: $(subId${{ variables.subscriptionsTarget }})
+          # IP Groups
+          templateIpGroupsPath: "$(corePathModules)/Microsoft.Network/ipGroups/ipGroups.deploy.json"
+          templateIpGroupsParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-ipGroups/$(target)-$(subscriptionsTarget)-ig-$(primaryRegionPrefix)-$(envPrefix)-$(target)-01.parameters.json"
+          # firewall Public IP Addresses
+          templatePipPath: "$(corePathModules)/Microsoft.Network/publicIPAddresses/publicIPAddresses.deploy.json"
+          templatePipParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-publicIPAddresses"
+          templatePipParameterPath_intHub: "$(templatePipParameterPath)/$(target)-$(subscriptionsTarget)-pip-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templatePipParameterPath_extHub: "$(templatePipParameterPath)/$(target)-$(subscriptionsTarget)-pip-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # firewall Policies
+          templateFwPolicyPath: "$(corePathModules)/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json"
+          templateFwPolicyParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-firewallPolicies"
+          templateFwPolicyParameterPath_intHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templateFwPolicyParameterPath_extHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # firewalls
+          templateFwPath: "$(corePathModules)/Microsoft.Network/azureFirewalls/azureFirewalls.deploy.json"
+          templateFwParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-azureFirewalls"
+          templateFwParameterPath_intHub: "$(templateFwParameterPath)/$(target)-$(subscriptionsTarget)-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templateFwParameterPath_extHub: "$(templateFwParameterPath)/$(target)-$(subscriptionsTarget)-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # locks
+          templatelockPath: "$(corePathModules)/Microsoft.Authorization/locks/locks.deploy.json"
+          templatelockParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Authorization-locks"
+         
+        environment: Preview
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              # Remove IP groups RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove IP groups RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                    azurePowerShellVersion: latestVersion
+              # Remove intHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove intHub RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    azurePowerShellVersion: latestVersion
+              # Remove extHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove extHub RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    azurePowerShellVersion: latestVersion
+              # IP Groups
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: IP Groups"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateIpGroupsPath)"
+                      -templateParametersFile "$(templateIpGroupsParameterPath)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub Firewall Public IP Address
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall Public IP"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templatePipPath)"
+                      -templateParametersFile "$(templatePipParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub Firewall Public IP Address
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall Public IP"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templatePipPath)"
+                      -templateParametersFile "$(templatePipParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub firewall Policy
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall Policy"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPolicyPath)"
+                      -templateParametersFile "$(templateFwPolicyParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub firewall Policy
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall Policy"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPolicyPath)"
+                      -templateParametersFile "$(templateFwPolicyParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub firewall
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPath)"
+                      -templateParametersFile "$(templateFwParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub firewall
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionPrv)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPath)"
+                      -templateParametersFile "$(templateFwParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+
+              # Replace IP Groups RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionPrv)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                    taskDisplayName: "AzPS: Replace Lock - IP Groups RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+              # Replace intHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionPrv)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    taskDisplayName: "AzPS: Replace Lock - intHub RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+              # Replace extHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionPrv)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    taskDisplayName: "AzPS: Replace Lock - extHub RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+  - stage: ComponentsTest 
+    jobs:
+    - job: ModuleAndConfigurations
+      pool:
+        vmImage: $(agent)
+      steps:
+      - task: AzurePowerShell@5
+        displayName: 'Components Test'
+        inputs:
+          azureSubscription: '$(ServiceConnectionPrv)'
+          scriptPath: ./Scripts/Pester/invokePester.ps1
+          scriptArguments:
+              -testSubDirectory "ConfigFileTests"
+              -tagArray @("Microsoft.Network-azureFirewalls","Microsoft.Network-firewallPolicies","Microsoft.Network-publicIPAddresses","Microsoft.Network-ipGroups")
+          azurePowerShellVersion: latestVersion
+      - task: PublishTestResults@2
+        displayName: 'Publish Test Results **/TEST-*.xml IN'
+        inputs:
+          testResultsFiles: "**/TEST-*.xml"
+          testResultsFormat: NUnit
+          failTaskOnFailedTests: true
+  
+  - stage: NonProduction
+    pool:
+      vmImage: $(agent)
+    variables:
+      - group: ${{ variables.target }}-NonProduction
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: "Deployment_firewall_${{ variables.subscriptionsTarget }}"
+        variables:
+          subscriptionId: $(subId${{ variables.subscriptionsTarget }})
+          # IP Groups
+          templateIpGroupsPath: "$(corePathModules)/Microsoft.Network/ipGroups/ipGroups.deploy.json"
+          templateIpGroupsParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-ipGroups/$(target)-$(subscriptionsTarget)-ig-$(primaryRegionPrefix)-$(envPrefix)-$(target)-01.parameters.json"
+          # firewall Public IP Addresses
+          templatePipPath: "$(corePathModules)/Microsoft.Network/publicIPAddresses/publicIPAddresses.deploy.json"
+          templatePipParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-publicIPAddresses"
+          templatePipParameterPath_intHub: "$(templatePipParameterPath)/$(target)-$(subscriptionsTarget)-pip-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templatePipParameterPath_extHub: "$(templatePipParameterPath)/$(target)-$(subscriptionsTarget)-pip-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+           # firewall Policies
+          templateFwPolicyPath: "$(corePathModules)/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json"
+          templateFwPolicyParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-firewallPolicies"
+          templateFwPolicyParameterPath_intHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templateFwPolicyParameterPath_extHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # firewalls
+          templateFwPath: "$(corePathModules)/Microsoft.Network/azureFirewalls/azureFirewalls.deploy.json"
+          templateFwParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-azureFirewalls"
+          templateFwParameterPath_intHub: "$(templateFwParameterPath)/$(target)-$(subscriptionsTarget)-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templateFwParameterPath_extHub: "$(templateFwParameterPath)/$(target)-$(subscriptionsTarget)-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # locks
+          templatelockPath: "$(corePathModules)/Microsoft.Authorization/locks/locks.deploy.json"
+          templatelockParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Authorization-locks"
+
+        environment: NonProduction
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              # Remove IP groups RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove IP groups RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                    azurePowerShellVersion: latestVersion
+              # Remove intHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove intHub RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    azurePowerShellVersion: latestVersion
+              # Remove extHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove extHub RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    azurePowerShellVersion: latestVersion
+              # IP Groups
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: IP Groups"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateIpGroupsPath)"
+                      -templateParametersFile "$(templateIpGroupsParameterPath)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub Firewall Public IP Address
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall Public IP"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templatePipPath)"
+                      -templateParametersFile "$(templatePipParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub Firewall Public IP Address
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall Public IP"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templatePipPath)"
+                      -templateParametersFile "$(templatePipParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub firewall Policy
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall Policy"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPolicyPath)"
+                      -templateParametersFile "$(templateFwPolicyParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub firewall Policy
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall Policy"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPolicyPath)"
+                      -templateParametersFile "$(templateFwPolicyParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub firewall
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPath)"
+                      -templateParametersFile "$(templateFwParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub firewall
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionNProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPath)"
+                      -templateParametersFile "$(templateFwParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              
+              # Replace IP Groups RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionNProd)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                    taskDisplayName: "AzPS: Replace Lock - IP Groups RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+              # Replace intHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionNProd)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    taskDisplayName: "AzPS: Replace Lock - intHub RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+              # Replace extHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionNProd)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    taskDisplayName: "AzPS: Replace Lock - extHub RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+  - stage: RegressionTest
+    condition: succeeded()
+    variables:
+      - group: ${{ variables.target }}-Production
+    jobs:
+    - deployment: "CheckFirewallRulesDrifts"
+      pool:
+        vmImage: $(agent)
+      variables:
+        subscriptionId: $(subId${{ variables.subscriptionsTarget }})
+        templateFwPolicyPath: "$(corePathModules)/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json"
+        templateFwPolicyParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-firewallPolicies"
+        templateFwPolicyParameterPath_intHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+        templateFwPolicyParameterPath_extHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"   
+      environment: Production
+      strategy:
+          runOnce:
+            deploy:
+              steps:
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - template: ../shared/regressionTesting.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionProd)
+                    resourceGroupName: "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    taskDisplayName: "AzPS: Internal Hub Firewall Rules regression testing"
+                    templateFile: "$(templateFwPolicyPath)"
+                    templateParametersFilePath: "$(templateFwPolicyParameterPath_intHub)"
+                    subscriptionId: "$(subscriptionId)"
+
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/regressionTesting.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionProd)
+                    resourceGroupName: "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    taskDisplayName: "AzPS: External Hub Firewall Rules regression testing"
+                    templateFile: "$(templateFwPolicyPath)"
+                    templateParametersFilePath: "$(templateFwPolicyParameterPath_extHub)"
+                    subscriptionId: "$(subscriptionId)"
+    - job: WaitForValidation
+      displayName: Wait for validation  
+      pool: server    
+      timeoutInMinutes: 1440
+      steps:   
+      - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'all-extHub'))}}:
+        - task: ManualValidation@0
+          timeoutInMinutes: 1440
+          inputs:
+            instructions: 'Please review and validate CheckFirewallRulesDrifts regression test Output!'
+            onTimeout: 'reject'
+
+  - stage: Production
+    pool:
+      vmImage: $(agent)
+    variables:
+      - group: ${{ variables.target }}-Production
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: "Deployment_firewall_${{ variables.subscriptionsTarget }}"
+        variables:
+          subscriptionId: $(subId${{ variables.subscriptionsTarget }})
+          # IP Groups
+          templateIpGroupsPath: "$(corePathModules)/Microsoft.Network/ipGroups/ipGroups.deploy.json"
+          templateIpGroupsParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-ipGroups/$(target)-$(subscriptionsTarget)-ig-$(primaryRegionPrefix)-$(envPrefix)-$(target)-01.parameters.json"
+          # firewall Public IP Addresses
+          templatePipPath: "$(corePathModules)/Microsoft.Network/publicIPAddresses/publicIPAddresses.deploy.json"
+          templatePipParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-publicIPAddresses"
+          templatePipParameterPath_intHub: "$(templatePipParameterPath)/$(target)-$(subscriptionsTarget)-pip-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templatePipParameterPath_extHub: "$(templatePipParameterPath)/$(target)-$(subscriptionsTarget)-pip-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # firewall Policies
+          templateFwPolicyPath: "$(corePathModules)/Microsoft.Network/firewallPolicies/firewallPolicies.deploy.json"
+          templateFwPolicyParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-firewallPolicies"
+          templateFwPolicyParameterPath_intHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templateFwPolicyParameterPath_extHub: "$(templateFwPolicyParameterPath)/$(target)-$(subscriptionsTarget)-fwp-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"
+          # firewalls
+          templateFwPath: "$(corePathModules)/Microsoft.Network/azureFirewalls/azureFirewalls.deploy.json"
+          templateFwParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Network-azureFirewalls"
+          templateFwParameterPath_intHub: "$(templateFwParameterPath)/$(target)-$(subscriptionsTarget)-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-inthub-01.parameters.json"
+          templateFwParameterPath_extHub: "$(templateFwParameterPath)/$(target)-$(subscriptionsTarget)-azfw-$(primaryRegionPrefix)-$(envPrefix)-$(target)-exthub-01.parameters.json"  
+          # locks
+          templatelockPath: "$(corePathModules)/Microsoft.Authorization/locks/locks.deploy.json"
+          templatelockParameterPath: "$(corePathConfig)/$(envPrefix)/Microsoft.Authorization-locks"
+
+        environment: Production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              # Remove IP groups RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove IP groups RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                    azurePowerShellVersion: latestVersion
+              # Remove intHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove intHub RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    azurePowerShellVersion: latestVersion
+              # Remove extHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: 'AzPS: Remove extHub RG Locks'
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/removeResourceLocks.ps1"
+                    scriptArguments:
+                      -resourceGroupList "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    azurePowerShellVersion: latestVersion
+              # IP Groups
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: IP Groups"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateIpGroupsPath)"
+                      -templateParametersFile "$(templateIpGroupsParameterPath)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub Firewall Public IP Address
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall Public IP"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templatePipPath)"
+                      -templateParametersFile "$(templatePipParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub Firewall Public IP Address
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall Public IP"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templatePipPath)"
+                      -templateParametersFile "$(templatePipParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub firewall Policy
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall Policy"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPolicyPath)"
+                      -templateParametersFile "$(templateFwPolicyParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub firewall Policy
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall Policy"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPolicyPath)"
+                      -templateParametersFile "$(templateFwPolicyParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # Internal Hub firewall
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: Internal Hub - Firewall"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPath)"
+                      -templateParametersFile "$(templateFwParameterPath_intHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+              # External Hub firewall
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}: 
+                - task: AzurePowerShell@5
+                  displayName: "AzPS: External Hub - Firewall"
+                  inputs:
+                    azureSubscription: $(ServiceConnectionProd)
+                    scriptPath: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    scriptArguments: -templateFile "$(templateFwPath)"
+                      -templateParametersFile "$(templateFwParameterPath_extHub)"
+                      -resourceGroupName "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                      -subscriptionId "$(subscriptionId)"
+                      -buildInfo "$(Build.SourceVersion) $(Build.SourceBranchName)"
+                    azurePowerShellVersion: latestVersion
+
+              # Replace IP Groups RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'ipGroups'), eq(parameters.deploymentType, 'all-intHub'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionProd)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-ipgroups-01"
+                    taskDisplayName: "AzPS: Replace Lock - IP Groups RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+              # Replace intHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'intHub-firewallPolicy'), eq(parameters.deploymentType, 'intHub-firewall'), eq(parameters.deploymentType, 'all-intHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionProd)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-inthub-01"
+                    taskDisplayName: "AzPS: Replace Lock - intHub RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+
+              # Replace extHub RG locks
+              - ${{ if or(eq(parameters.deploymentType, 'extHub-firewallPolicy'), eq(parameters.deploymentType, 'extHub-firewall'), eq(parameters.deploymentType, 'all-extHub'))}}:
+                - template: ../shared/deployResourceGroupLocks.pipeline.yml
+                  parameters:
+                    serviceConnection: $(ServiceConnectionProd)
+                    resourceGroupsLock:
+                      - "rg-$(primaryRegionPrefix)-$(envPrefix)-exthub-01"
+                    taskDisplayName: "AzPS: Replace Lock - extHub RG"
+                    deploymentScript: "$(corePathScripts)/New-DeploymentV2.ps1"
+                    templateFile: "$(templatelockPath)"
+                    templateParametersFilePath: "$(templatelockParameterPath)"
+                      
+      
