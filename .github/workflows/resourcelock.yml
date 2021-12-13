@@ -8,7 +8,7 @@ jobs :
          uses: actions/upload-artifact@v2.2.4
          with:
           name: BuildArtifacts
-          path: ./
+          path: .mynewrepo/Scripts/
     deploy:
       runs-on : ubuntu-latest
       steps:
@@ -31,7 +31,7 @@ jobs :
          uses: Azure/powershell@v1
          with :
           inlineScript: |
-            ./Scripts/removeResourceLocks.ps1 `
+            .mynewrepo/Scripts/removeResourceLocks.ps1 `
                -resourceGroupList "githubactions" `
                -subscriptionId ${{ secrets.SUB_IDEN_ID }} `
                -skipTags
