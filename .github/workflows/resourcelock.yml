@@ -3,13 +3,19 @@ on: [push]
 jobs :
     Build :
       runs-on : ubuntu-latest
-      steps:
+      steps:  
+      - uses: actions/checkout@v2
+
+      - run: mkdir -p khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
+   
+      - run: echo hello > khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
+
       - uses: actions/upload-artifact@v2
         with:
-          name: BuildArtifacts 
-          path: khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
+         name: BuildArtifacts
+         path: khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
 
- 
+   
     deploy:
       runs-on : ubuntu-latest
       steps:
