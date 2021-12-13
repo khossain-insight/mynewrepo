@@ -34,7 +34,6 @@ jobs :
             ./Scripts/removeResourceLocks.ps1 `
                -resourceGroupList "githubactions" `
                -subscriptionId ${{ secrets.SUB_IDEN_ID }} `
-               -buildInfo "${{ GITHUB_SHA }} ${{ GITHUB_REF_NAME }} `
                -skipTags
           azPSVersion: latest
          
