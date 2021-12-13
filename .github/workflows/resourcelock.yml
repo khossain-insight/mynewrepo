@@ -1,6 +1,50 @@
-name : test resouce lock
+name: Global Tests
+
+# Controls when the workflow will run
 on:
- workflow_displatch
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: environment
+        description: Select the environment
+      boolean:
+        type: boolean
+        description: True or False
+      choice:
+        type: choice
+        description: Make a choice
+        options:
+          - prod
+          - dev
+    
+     
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+   Build:
+    runs-on: ${{ secrets.AGENT_LIX }}
+    steps:
+    # Checkout code from repo
+    - uses: actions/checkout@v2
+
+    # Validate ARM Modules
+    - name: Validate ARM Modules
+      run: find ./Modules | grep .json | xargs -L1 python -mjson.tool > /dev/null
+      shell: cmd
+
+    # Validate ARM Configurations
+    - name: Validate ARM Configurations
+      run: find ./Configuration | grep .json | xargs -L1 python -mjson.tool > /dev/null
+      shell: cmd
+    
+    # Upload Build Artifact
+     - name: Upload Build Artifact
+       uses: actions/upload-artifact@v2
+        with:
+          name: my-artifact
+          path: path/to/artifact/ # or path/to/artifact
+    
+     
 
  
   
