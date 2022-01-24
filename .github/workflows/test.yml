@@ -2,52 +2,17 @@ name: Devsecops Consumer Deployment
 
 on:
   workflow_dispatch:
+   
     inputs:
-       applicationSecurityGroups:
-         description: deploy applicationSecurityGroups(yes/no)
-         required: false
-        
-       networkSecurityGroups :
-         description: deploy NetworkSecurityGroups (yes/no)
-         required: false
+      deploymentType:
+        description : Input DeploymentType (applicationSecurityGroups, networkSecurityGroups, privateEndpoints, resourceGroups, routeTables, networkCore, management, security, identity, vms, all )
+        required: true
+      
+      VmDeploymentType:
+        description: Input VmDeploymentType (all, ghe, sync, backup, replica, runners, minio, none)
+        required : true
+           
          
-       privateEndpoints :
-         description: deploy PrivateEndpoints (yes/no)
-         required: false
-         
-       resourceGroups :
-         description: deploy ResourceGroups(yes/no)
-         required: false
-         
-       routeTables :
-         description: deploy rputeTables (yes/no)
-         required: false
-         
-       networkCore :
-         description: deploy networkCore (yes/no)
-         required: false
-         
-       management :
-         description: deploy management (yes/no)
-         required: false
-         
-       security :
-         description: deploy Security(yes/no)
-         required: false
-            
-       identity :
-         description: deploy identity (yes/no)
-         required: false
-         
-       vms :
-         description: deploy VMs (yes/no)
-         required: false
-         
-       all :
-         description: deploy all (yes/no)
-         required: false
-       
-            
      
 jobs:
 
