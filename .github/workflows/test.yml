@@ -3,7 +3,6 @@ name: Devsecops Consumer Deployment
 on:
   workflow_dispatch:
     inputs:
-      deploymentType:
        applicationSecurityGroups:
          description: deploy applicationSecurityGroups(yes/no)
          required: false
@@ -49,18 +48,7 @@ on:
          required: false
        
             
-      VmDeploymentType:
-        type: choice
-        description: VmDeploymentType
-        options:
-          - all
-          - ghe
-          - sync
-          - backup
-          - replica
-          - runners
-          - minio
-          - none
+     
 jobs:
 
   Build:
