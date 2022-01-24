@@ -61,3 +61,739 @@ on:
           - runners
           - minio
           - none
+jobs:
+
+  Build:
+    uses: DTI/Azure-Cloud-Foundations-CICD/.github/workflows/job-codeBuild.workflow.yml@main
+    with:
+      publish_artifacts: 'yes'
+
+  ComponentsTest:
+    needs: Build
+    if: success()
+    runs-on: ${{ secrets.AGENT_WIN }}
+
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Components Test    
+      - name: Components Test
+        uses: Azure/powershell@v1
+        with:
+          inlineScript: |
+            ./Scripts/Pester/invokePester.ps1 `
+              -testSubDirectory consumerTests `
+              -tagArray @("Microsoft.Network-networkSecurityGroups") `
+              -parameterHashTable @{consumer='devsecops'; envPrefix='pr-prd'}               
+          azPSVersion: latest
+
+      - name: Publish Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action/composite@v1
+        if: always()
+        with:
+          files: '**/TEST-*.xml'
+      
+  Management :
+    needs : ComponentsTest  
+    if: ${{ success() && github.ref_name == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: ConsumerDevsecops 
+    env:
+       # Resource Groups - Variables
+      templateResourceGroupsPath: "./Modules/Microsoft.Resources/resourceGroups/resourceGroups.deploy.json"
+      templateResourceGroupsPlatformParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Resources-resourceGroups/devsecops-rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-${{ secrets.CLASSIFICATION_PROTECTED }}-platform.parameters.json"
+       
+       # NSG Flow Log Storage - Variables
+      templateStorageAccountsPath: "./Modules/Microsoft.Storage/storageAccounts/storageAccounts.deploy.json"
+      templateNflStorageAccountsParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Storage-storageAccounts/lz-devsecops-sa-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-flowlog-01.parameters.json"
+      templateRunnerStorageAccountsParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Storage-storageAccounts/lz-devsecops-sa-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-runner-01.parameters.json"
+        
+        # Policy Assignment
+      templatePolicyAssignmentsPath: "./Modules/Microsoft.Authorization/policyAssignments/policyAssignments_sub.deploy.json"
+      templateNsgFlowLogPolicyAssignmentsParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Authorization-policyAssignments"
+  
+       # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Authorization-locks'
+
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'resourceGroups' || github.event.inputs.deploymentType == 'privateEndpoints'}}
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'resourceGroups' || github.event.inputs.deploymentType == 'privateEndpoints'}}
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+          
+      # Resource Providers   
+      - name : Resource Providers
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-ResourceProviders.ps1 `
+                -AzConfigProfilePath './Configuration/Consumer/DevSecOps/pr-prd/devsecops-pr-prd-${{ secrets.CLASSIFICATION_PROTECTED }}-profile.json' `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}"
+          azPSVersion: latest
+
+      # Resource Groups Platform 
+      - name : Platform Resource Groups
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'identity' || github.event.inputs.deploymentType == 'resourceGroups' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateResourceGroupsPath}} `
+                -templateParametersFilePath ${{env.templateResourceGroupsPlatformParameterPath}} `
+                -location ${{secrets.PRIMARY_REGION }} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -subscriptionScope `
+                -tier '2'
+          azPSVersion: latest    
+      
+      # Storage Accounts
+      - name : Storage Accounts - NSG Flow Logs
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateStorageAccountsPath}} `
+                -templateParametersFilePath ${{env.templateNflStorageAccountsParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest
+       
+      # Storage Accounts for Runner
+      - name : Storage Accounts - Runner
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateStorageAccountsPath}} `
+                -templateParametersFilePath ${{env.templateRunnerStorageAccountsParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest                 
+
+      # Storage Accounts for Account Policy
+      - name : NSG Flow Logs Storage Account Policy
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatePolicyAssignmentsPath}} `
+                -templateParametersFilePath ${{env.templateNsgFlowLogPolicyAssignmentsParameterPath}} `
+                -location $(secrets.PRIMARY_REGION) `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                        
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -subscriptionScope `
+                -ParametersDiretory `
+                -skipTags `
+                -tier '2'
+          azPSVersion: latest             
+
+      # RG Locks
+      - name : RG Locks
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatelockPath}} `
+                -templateParametersFilePath ${{env.templatelockParameterPath}} `
+                -resourceGroupName "rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01, `
+                                    rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01" `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                        
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -skipTags `
+                -rgLocks
+          azPSVersion: latest               
+
+  Security:
+    needs : Management     
+    if: ${{ success() && github.ref_name == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: ConsumerDevsecops 
+    env:
+      # Key Vault - Variables
+      templateKeyVaultsPath: "./Modules/Microsoft.KeyVault/vaults/vaults.deploy.json"
+      templateKeyVaultsParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.KeyVault-vaults"
+    
+      # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Authorization-locks'
+
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # Key Vaults 
+      - name : Key Vaults
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateKeyVaultsPath}} `
+                -templateParametersFilePath ${{env.templateKeyVaultsParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -skipTags `
+                -tier '2'
+          azPSVersion: latest    
+
+      # RG Locks
+      - name : RG Locks
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatelockPath}} `
+                -templateParametersFilePath ${{env.templatelockParameterPath}} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `                                    
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                        
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -skipTags `
+                -rgLocks
+          azPSVersion: latest          
+                
+  NetworkCore:
+    needs : Security 
+    if: ${{ success() && github.ref_name == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: ConsumerDevsecops 
+    env:
+       # Route Tables - Variables
+      templateRtPath: "./Modules/Microsoft.Network/routeTables/routeTables.deploy.json"
+      templateRtParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-routeTables"
+       
+       # Network Security Groups - Variables
+      templateNsgPath: "./Modules/Microsoft.Network/networkSecurityGroups/networkSecurityGroups.deploy.json"
+      templateNsgParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-networkSecurityGroups"
+       
+       # ASG Groups - Variables
+      templateAsgPath: "./Modules/Microsoft.Network/applicationSecurityGroups/applicationSecurityGroups.deploy.json"
+      templateAsgParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-applicationSecurityGroups"
+      
+       # Virtual Network - Variables
+      templateVnetPath: "./Modules/Microsoft.Network/virtualNetworks/virtualNetworks.deploy.json"
+      templateVnetParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-virtualNetworks"
+      templateVnetParameterPath_Ghe: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-virtualNetworks/lz-devsecops-vn-auea-pr-prd-devsecops-ghe-01.parameters.json"
+      templateVnetParameterPath_Pls: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-virtualNetworks/lz-devsecops-vn-auea-pr-prd-devsecops-pls-01.parameters.json"   
+
+       # Private Dns Zone - Variables
+      templateDnsPath: "./Modules/Microsoft.Network/privateDnsZones/privateDnsZones.deploy.json"
+      templateDnsParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-privateDnsZones"
+
+       # Private Endpoints - Variables
+      templatePePath: "./Modules/Microsoft.Network/privateEndpoints/privateEndpoints.deploy.json"
+      templatePeParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-privateEndpoints"  
+     
+       ## VNET Peering - Variables
+      templatePeeringPath: "./Modules/Microsoft.Network/virtualNetworks/virtualNetworkPeerings.deploy.json"
+      templatePeeringParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-virtualNetworks-virtualNetworkPeerings"
+      templatePeeringParameterPath_Ghe: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-virtualNetworks-virtualNetworkPeerings/lz-devsecops-vnp-auea-pr-prd-devsecops-ghe-01.parameters.json"
+      templatePeeringParameterPath_Pls: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Network-virtualNetworks-virtualNetworkPeerings/lz-devsecops-vnp-auea-pr-prd-devsecops-pls-01.parameters.json"  
+
+       # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Authorization-locks'    
+
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' || github.event.inputs.deploymentType == 'routeTables' || github.event.inputs.deploymentType == 'applicationSecurityGroups' || github.event.inputs.deploymentType == 'networkSecurityGroups' || github.event.inputs.deploymentType == 'privateEndpoints'}}
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' || github.event.inputs.deploymentType == 'routeTables' || github.event.inputs.deploymentType == 'applicationSecurityGroups' || github.event.inputs.deploymentType == 'networkSecurityGroups' || github.event.inputs.deploymentType == 'privateEndpoints'}}
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # Route Tables    
+      - name : Route Tables
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' || github.event.inputs.deploymentType == 'routeTables' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateRtPath}} `
+                -templateParametersFilePath ${{env.templateRtParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `                
+                -tier '2'
+          azPSVersion: latest
+
+      # Application Security Groups
+      - name : Application Security Groups
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' || github.event.inputs.deploymentType == 'applicationSecurityGroups' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateAsgPath}} `
+                -templateParametersFilePath ${{env.templateAsgParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest      
+      
+      # Network Security Groups
+      - name : Network Security Groups
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' || github.event.inputs.deploymentType == 'networkSecurityGroups' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateNsgPath}} `
+                -templateParametersFilePath ${{env.templateNsgParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest           
+
+      # Virtual Network GHE
+      - name : Virtual Network -GHE
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateVnetPath}} `
+                -templateParametersFilePath ${{env.templateVnetParameterPath_Ghe}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest                           
+        
+      # Virtual Network PLS
+      - name : Virtual Network - PLS
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateVnetPath}} `
+                -templateParametersFilePath ${{env.templateVnetParameterPath_Pls}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-pls-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest          
+
+      # Private Dns Zones
+      - name : Private Dns Zones
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateDnsPath}} `
+                -templateParametersFilePath ${{env.templateDnsParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest 
+                  
+      # Private Endpoints
+      - name : Private Endpoints
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' || github.event.inputs.deploymentType == 'privateEndpoints' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatePePath}} `
+                -templateParametersFilePath ${{env.templatePeParameterPath}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-pls-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest         
+
+      #  VNET Peering - GHE
+      - name :  VNET Peering -GHE
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatePeeringPath}} `
+                -templateParametersFilePath ${{env.templatePeeringParameterPath_Ghe}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest          
+      
+      #  VNET Peering - PLS
+      - name :  VNET Peering -PLS
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatePeeringPath}} `
+                -templateParametersFilePath ${{env.templatePeeringParameterPath_Pls}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-pls-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest
+                
+      # RG Locks
+      - name : RG Locks
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatelockPath}} `
+                -templateParametersFilePath ${{env.templatelockParameterPath}} `
+                -resourceGroupName "rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lzmgt-01, ` 
+                                    rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-pls-01" `                                    
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                        
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -skipTags `
+                -rgLocks
+          azPSVersion: latest       
+                  
+  VMS :
+    needs : NetworkCore 
+    if: ${{success() && ( github.event.inputs.deploymentType == 'vms' || github.event.inputs.deploymentType == 'all' ) }}      
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: ConsumerDevsecops 
+    env:
+       # Virtual Machines - Variables
+      templateComputePlatformPath: "./Modules/Microsoft.Compute/virtualMachines/virtualMachines.deploy.json"  
+      templateVMPlatformParameterPath_Ghe: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghe-01.parameters.json"         
+      templateVMPlatformParameterPath_Replica: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghe-02.parameters.json"
+      templateVMPlatformParameterPath_Winrunner01: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-winrnr-01.parameters.json"
+      templateVMPlatformParameterPath_Lixrunner01: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-lixrnr-01.parameters.json"           
+      templateVMPlatformParameterPath_Winmgmt01: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-syn-01.parameters.json"           
+      templateVMPlatformParameterPath_backup01: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-bkp-01.parameters.json"
+      templateVMPlatformParameterPath_mini01: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-mini-01.parameters.json"
+      templateVMPlatformParameterPath_mini02: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-mini-02.parameters.json"
+      templateVMPlatformParameterPath_mini03: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-mini-03.parameters.json"
+      templateVMPlatformParameterPath_mini04: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-mini-04.parameters.json"
+      templateVMPlatformParameterPath_mini05: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-mini-05.parameters.json"
+      templateVMPlatformParameterPath_mini06: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Compute-vms/lz-devsecops-vm-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-mini-06.parameters.json"                
+
+       # locks
+      templatelockPath: './Modules/Microsoft.Authorization/locks/locks.deploy.json'
+      templatelockParameterPath: './Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Authorization-locks' 
+
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # Virtual Machines - Github Server  
+      - name : Virtual Machines - Github Server
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'ghe' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_Ghe}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghe-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest
+      
+      # Virtual Machines - Github Server Replica 
+      - name : Virtual Machines - Github Server Replica
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'replica' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_Replica}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghe-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest
+                    
+      # Virtual Machines - Github Windows Runner 
+      - name : Virtual Machines - Github Windows Runner
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'runners' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_Winrunner01}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest
+          
+      # Virtual Machines - Github Linux Runner 
+      - name : Virtual Machines - Github Linux Runner
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'runners' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_Lixrunner01}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest       
+
+      # Virtual Machines - Github Minio AZ 01 
+      - name : Virtual Machines - Github Minio AZ 01
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'minio' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_mini01}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest              
+
+      # Virtual Machines - Github Minio AZ 02 
+      - name : Virtual Machines - Github Minio AZ 02
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'minio' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_mini02}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest          
+
+      # Virtual Machines - Github Minio AZ 01 
+      - name : Virtual Machines - Github Minio AZ 01
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'minio' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_mini03}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest               
+                    
+      # Virtual Machines - Github Minio AZ 02 
+      - name : Virtual Machines - Github Minio AZ 02
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'minio' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_mini04}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest                 
+                   
+      # Virtual Machines - Github Minio AZ 03 
+    #  - name : Virtual Machines - Github Minio AZ 03
+    #    if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'minio' }}
+    #    uses: Azure/powershell@v1
+    #    with:
+    #      inlineScript:  |
+    #         ./Scripts/New-DeploymentV2.ps1 `
+    #            -templateFile ${{env.templateComputePlatformPath}} `
+    #            -templateParametersFilePath ${{env.templateVMPlatformParameterPath_mini05}} `
+    #            -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+    #            -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+    #            -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+    #            -skipTags `
+    #            -tier '2'
+    #      azPSVersion: latest                 
+                    
+      # Virtual Machines - Github Minio AZ 03 
+    #  - name : Virtual Machines - Github Minio AZ 03
+    #   if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'minio' }}
+    #    uses: Azure/powershell@v1
+    #    with:
+    #      inlineScript:  |
+    #         ./Scripts/New-DeploymentV2.ps1 `
+    #            -templateFile ${{env.templateComputePlatformPath}} `
+    #            -templateParametersFilePath ${{env.templateVMPlatformParameterPath_mini06}} `
+    #            -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+    #            -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+    #            -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+    #            -skipTags `
+    #            -tier '2'
+    #      azPSVersion: latest     
+
+      # Virtual Machines - Github Management Server 
+      - name : Virtual Machines - Github Management Server
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'sync' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_Winmgmt01}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest        
+
+      # Virtual Machines - Github Backup Server 
+      - name : Virtual Machines - Github Backup Server
+        if: ${{ github.event.inputs.VmDeploymentType == 'all' || github.event.inputs.VmDeploymentType == 'backup' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateComputePlatformPath}} `
+                -templateParametersFilePath ${{env.templateVMPlatformParameterPath_backup01}} `
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `
+                -resourceGroupName rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghebackup-01 `            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -tier '2'
+          azPSVersion: latest           
+
+      # RG Locks
+      - name : RG Locks
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templatelockPath}} `
+                -templateParametersFilePath ${{env.templatelockParameterPath}} `
+                -resourceGroupName "rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghe-01, ` 
+                                    rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghemgt-01, ` 
+                                    rg-${{ secrets.PRIMARY_REGION_PREFIX }}-pr-prd-devsecops-ghebackup-01" `                                    
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                        
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -rgLocks
+          azPSVersion: latest           
+                      
+  Identity:
+    needs : VMS 
+    if: ${{ success() && github.ref_name == 'main' }}
+    runs-on: ${{ secrets.AGENT_WIN }}
+    environment: ConsumerDevsecops 
+    env:                  
+       # Role Assignments - Variables
+      templateRoleAssignmentsPath: "./Modules/Microsoft.Authorization/roleAssignments/roleAssignments.deploy.json"
+      templateRoleAssignmentsParameterPath: "./Configuration/Consumer/DevSecOps/pr-prd/Microsoft.Authorization-roleAssignments"
+      
+    steps:
+      # Download a Build Artifact
+      - name: Download a Build Artifact
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'identity' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'resourceGroups' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'networkCore'}}
+        uses: actions/download-artifact@v2.0.10
+        with:
+          name: BuildArtifacts
+
+      # Azure Login
+      - name: Azure Login
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'identity' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'resourceGroups' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'networkCore'}}
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_SP_MG }}
+          allow-no-subscriptions: true
+          enable-AzPSSession: true
+
+      # Role Assignments    
+      - name :  Role Assignments
+        if: ${{ github.event.inputs.deploymentType == 'all' || github.event.inputs.deploymentType == 'identity' || github.event.inputs.deploymentType == 'management' || github.event.inputs.deploymentType == 'resourceGroups' || github.event.inputs.deploymentType == 'security' || github.event.inputs.deploymentType == 'networkCore' }}
+        uses: Azure/powershell@v1
+        with:
+          inlineScript:  |
+             ./Scripts/New-DeploymentV2.ps1 `
+                -templateFile ${{env.templateRoleAssignmentsPath}} `
+                -templateParametersFilePath ${{env.templateRoleAssignmentsParameterPath}} `
+                -location $(secrets.PRIMARY_REGION) `                
+                -subscriptionId ${{ secrets.SUB_PROD_ID }} `                            
+                -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
+                -subscriptionScope `
+                -ParametersDiretory `
+                -tier '2'
+          azPSVersion: latest    
+          
