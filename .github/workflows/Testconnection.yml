@@ -1,0 +1,27 @@
+on: 
+ workflow_dispatch:
+
+name: AzurePowerShellSample
+
+jobs:
+
+  build:
+    runs-on: [self-hosted, linux, Azure]
+    steps:
+    - name: check az is installed with PowerShell Desktop
+      run: az version
+
+    - name: Login via Az module
+      uses: azure/login@v1.4.3
+      with:
+        creds: '${{ secrets.AZURE_CREDENTIALS }}'
+     
+   # - name: Run Azure script
+    #  run: Get-AzVM -ResourceGroupName "rg-auea-nprd-prv-dnsfwd-01"
+     # shell: powershell
+    - name: Run Azure PowerShell script
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          Get-AzVM -ResourceGroupName "rg-auea-nprd-prv-dnsfwd-01"
+        azPSVersion: 'latest'
