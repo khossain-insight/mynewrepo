@@ -8,20 +8,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - name: check az is installed with PowerShell Desktop
-      run: az version
-
     - name: Login via Az module
-      uses: azure/login@v1.4.3
+      uses: azure/login@v1
       with:
         creds: '${{ secrets.testkh }}'
-     
-   # - name: Run Azure script
-    #  run: Get-AzVM -ResourceGroupName "rg-auea-nprd-prv-dnsfwd-01"
-     # shell: powershell
+             
     - name: Run Azure PowerShell script
       uses: azure/powershell@v1
       with:
         inlineScript: |
-          Get-AzVM -ResourceGroupName "rg-auea-nprd-prv-dnsfwd-01"
+          Get-AzVM -ResourceGroupName "NetworkWatcherRG"
         azPSVersion: 'latest'
