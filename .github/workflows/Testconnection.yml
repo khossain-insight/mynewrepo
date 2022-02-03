@@ -6,7 +6,7 @@ name: AzurePowerShellSample
 jobs:
 
   build:
-    runs-on: [self-hosted, linux, Azure]
+    runs-on: ubuntu-latest
     steps:
     - name: check az is installed with PowerShell Desktop
       run: az version
