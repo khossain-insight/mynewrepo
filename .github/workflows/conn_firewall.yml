@@ -923,3 +923,7 @@ jobs:
               -buildInfo "${{ github.sha }} ${{ github.ref_name }}" `
               -skipTags
           azPSVersion: latest
+<<<<<<< HEAD:.github/workflows/conn_firewall.workflow.yml
+=======
+ 
+>>>>>>> 95a4eff58fe338213e4b9f1360ba840da2922ade:.github/workflows/conn_firewall.yml

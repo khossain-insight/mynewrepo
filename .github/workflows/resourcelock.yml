@@ -1,21 +1,17 @@
 name : test job
-on: [push]
+on: 
+ workflow_dispatch:
 jobs :
     Build :
       runs-on : ubuntu-latest
       steps:  
       - uses: actions/checkout@v2
-
-      - run: mkdir -p khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
-   
-      
-
+       
       - uses: actions/upload-artifact@v2
         with:
          name: BuildArtifacts
-         path: khossain-insight/mynewrepo/scripts/removeresourcelocks.ps1
-
-   
+         path: ./
+       
     deploy:
       runs-on : ubuntu-latest
       steps:
@@ -24,11 +20,8 @@ jobs :
          with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
           allow-no-subscriptions: true
-          enable-AzPSSession: true
-          
-       - name: checkout source code
-         uses: actions/checkout@v2
-         
+          enable-AzPSSession: true          
+               
        - name: Download a Build Artifact
          uses: actions/download-artifact@v2.0.10
          with:
