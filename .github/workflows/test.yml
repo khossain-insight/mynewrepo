@@ -1,7 +1,8 @@
+
 on: 
  workflow_dispatch:
 
-name: AzurePowerShellSample
+name: Test validation
 
 jobs:
 
