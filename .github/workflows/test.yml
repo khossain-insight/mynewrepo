@@ -12,17 +12,10 @@ jobs:
     steps:
     
      - uses: actions/checkout@v1
-
-  #   - name: validate
-  #     run: find ./Modules | grep .json | xargs -L1 python -mjson.tool > /dev/null
-  #     shell: bash
-  
-     - name: Validate BigQuery schema
-        uses: snapcart/json-schema-validator@v1
-        with:
-         json_schema: ./Modules
-         send_comment : true
-         clear-comment : true
+     - uses: Zingabopp/JsonValidate-Action@v1
+       with:
+        json-schema: https://example.com/schema.json
+        json-file:  ./Modules
     
      - name: Upload Build Artifact
        uses: actions/upload-artifact@v2.2.4
