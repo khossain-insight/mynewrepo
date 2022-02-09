@@ -16,7 +16,7 @@ jobs:
        uses: venura9/arm-ttk@master
        id: path-test
        with: 
-        path: ./Modules
+        path: './Modules/resource.json'
 
      - name: Results for Run ARM-TTK with 'path'
        run: |
