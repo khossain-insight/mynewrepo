@@ -12,10 +12,16 @@ jobs:
     steps:
     
      - uses: actions/checkout@v1
-     - uses: Zingabopp/JsonValidate-Action@v1
-       with:
-        json-schema:  http://json-schema.org
-        json-file:  ./Modules
+     - name: Run ARM-TTK with 'path'
+       uses: venura9/arm-ttk@master
+       id: path-test
+       with: 
+        path: ./Modules
+
+     - name: Results for Run ARM-TTK with 'path'
+       run: |
+          content=${{ steps.path-test.outputs.results }}
+          echo "Results $content"
     
      - name: Upload Build Artifact
        uses: actions/upload-artifact@v2.2.4
