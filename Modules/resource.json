@@ -1,0 +1,53 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"resourceGroupNames": {
+			"type": "array",
+			"metadata": {
+				"description": "Required. An array of Resource Group Names."
+			}
+		},
+		"location": {
+			"type": "string",
+			"defaultValue": "[deployment().location]",
+			"metadata": {
+				"description": "Optional. Location for all resources."
+			}
+		},
+		"tags": {
+			"defaultValue": {},
+			"type": "object",
+			"metadata": {
+				"description": "Optional. Required Resource Group Tags"
+			}
+		}
+	},
+	"variables": {
+		"apiVersions": {
+			"resourceGroups": "2020-06-01"
+		}
+	},
+	"resources": [
+		{
+			"type": "Microsoft.Resources/resourceGroups",
+			"apiVersion": "[variables('apiVersions').resourceGroups]",
+			"copy": {
+				"name": "rgLoop",
+				"count": "[length(parameters('resourceGroupNames'))]"
+			},
+			"name": "[parameters('resourceGroupNames')[copyIndex()]]",
+			"location": "[parameters('location')]",
+			"tags": "[parameters('tags')]"
+		}
+	],
+	"outputs": {
+		"resourceGroupName": {
+			"type": "array",
+			"value": "[parameters('resourceGroupNames')]",
+			"metadata": {
+				"description": "The name of the Resource Group."
+			}
+		}
+	}
+}
