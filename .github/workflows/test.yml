@@ -13,9 +13,16 @@ jobs:
     
      - uses: actions/checkout@v1
     
-     - name: validate
-       run: find ./Modules | grep .json | xargs -L1 python -mjson.tool > /dev/null
-       shell: bash
+     - name: Run ARM-TTK with 'path'
+       uses: venura9/arm-ttk@master
+       id: path-test
+       with: 
+        path: ./Modules
+
+     - name: Results for Run ARM-TTK with 'path'
+       run: |
+         content=${{ steps.path-test.outputs.results }}
+         echo "Results $content"
     
      - name: Upload Build Artifact
        uses: actions/upload-artifact@v2.2.4
