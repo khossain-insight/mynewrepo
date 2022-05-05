@@ -6,7 +6,7 @@ on:
 env:
   wiki_source_repo: "khossain-insight/mynewrepo"
   wiki_source_repo_dir: "khossain-insight/*"
-  wiki_target_repo: "khossain-insight/mynewrepo.wiki"
+  wiki_target_repo: "khossain-insight/mynewrepo/wiki"
   github_user_name: "khossain-insight"
   github_email: "mdkowser.hossain@insight.com"
   github_commit_message: "Wiki Sync from docs/wiki"
