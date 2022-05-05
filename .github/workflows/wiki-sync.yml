@@ -1,12 +1,8 @@
-ame: Docs/Wiki Sync
+name: Docs/Wiki Sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "documents/**"
-
+  workflow_dispatch:
+          
 env:
   wiki_source_repo: "khossain-insight/mynewrepo"
   wiki_source_repo_dir: "khossain-insight/*"
