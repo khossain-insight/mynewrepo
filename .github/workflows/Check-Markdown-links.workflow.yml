@@ -31,6 +31,6 @@ jobs:
          use-quiet-mode: 'yes'
          use-verbose-mode: 'yes'
          config-file: './Scripts/mlc_config.json'
-         folder-path: 'DTI/azure-cloud-foundations-cicd/Documentation'
+         folder-path: './Documentation'
       #  check-modified-files-only: 'yes'
          max-depth: 2
