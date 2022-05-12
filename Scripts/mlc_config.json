@@ -3,5 +3,21 @@
       {
         "pattern": "^http://localhost"
       }
+    ],
+    "httpHeaders": [
+      {
+        "comment": "Workaround as suggested here: https://github.police.nsw.gov.au/issues/201",
+        "urls": [
+          "https://github.police.nsw.gov.au/"
+        ]     
+      }
+    ],
+    "timeout": "5s",
+    "retryOn429": true,
+    "retryCount": 5,
+    "fallbackRetryDelay": "30s",
+    "aliveStatusCodes": [
+      200,
+      429
     ]
   }
