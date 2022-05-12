@@ -31,6 +31,6 @@ jobs:
          use-quiet-mode: 'yes'
          use-verbose-mode: 'yes'
          config-file: './Scripts/mlc_config.json'
-         folder-path: './Documentation'
+         folder-path: './Documents'
       #  check-modified-files-only: 'yes'
          max-depth: 2
