@@ -6,9 +6,9 @@
     ],
     "httpHeaders": [
       {
-        "comment": "Workaround as suggested here: https://github.police.nsw.gov.au/issues/201",
+        "comment": "Workaround as suggested here: https://google.com.au",
         "urls": [
-          "https://github.police.nsw.gov.au/"
+          "https://google.com.au/"
         ]     
       }
     ],
